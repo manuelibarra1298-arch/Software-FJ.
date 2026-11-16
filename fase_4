@@ -1,1 +1,139 @@
 #Jose_Manuel_ibarra_duran
+CC.1094427593
+# Ingenieria Electronica
+# Sistema Integral de Gestio de Clientes, Servicios y reservas.
+
+import os 
+#se usara para crear la carpeta de logs y crear rutas del archivo.
+
+import re
+#se usara para verificar que lo correos tengan un formato correcto.
+
+from abc import ABC, abstractmethod
+#para crear clases abtractas
+
+from datetime import datetime
+#se usara para ponerle fecha y hora a los logs.
+
+# Excepsiones personalizadas
+"""Python cuenta con sus propios errores como "ValueError" o "TypeError", pero son errores generales. para 
+que el sistema detecte exctamente que fallo se opta por crear errores personalizados que permitan detectar
+donde se genero el error, los cuales heredan de una clase base."""
+
+class softwareFJError(Exception):
+    """Es el error base para todos los errres del sistema."""
+    def __init__(self, mensaje = "Error en el Sistema", codigo = "Er-000"):
+        #se guarda el mensaje y un codigo para identificar el error.
+        self.mensaje = mensaje
+        self.codigo = codigo
+        super().__init__(f"[{codigo}]{mensaje}")
+        
+class DatoInvalidoError(softwareFJError):
+    """Se aplica cuando un dato no es valido."""
+    def __init__(self, mensaje = "Dato Invalido"):
+        super().__init__(mensaje, "Er-001")
+
+class ParametroFaltanteError(softwareFJError):
+    """Se aplica cuando hace falta un dato importante."""
+    def __init__(self, mensaje = "Campo Faltante"):
+        super().__init__(mensaje, "Er-002")
+
+class ClienteInvalidoError(softwareFJError):
+    """Se aplica cuando un cliente no se pudo registrar o no existe."""
+    def __init__(self, mensaje = "Cliente Invalido"):
+        super().__init__(mensaje, "Er-003")
+
+class servicioNoDisponibleError(softwareFJError):
+    """Se aplica cuando un servicio no esta en existencia o no esta disponible."""
+    def __init__(self, mensaje = "Servicio Fuera De Existencia"):
+        super().__init__(mensaje, "Er-004")
+    
+class OperacionNoPermitidaError(softwareFJError):
+    """Se aplica cuando se intenta realizar una accio no establecida."""
+    def __init__(self, mensaje = "Operacin no Permitida"):
+        super().__init__(mensaje, "Er-005")
+
+class ReservaInvalidaError(softwareFJError):
+    """Se aplica al hacer una reserva de forma invalida o incompleta."""
+    def __init__(self, mensaje = "Reserva Invalida"):
+        super().__init__(mensaje, "Er-006")
+        
+class CalculoIncorrectoError(softwareFJError):
+    """Aplica cuando los calculos detectan alguna inconsistencia en los datos."""
+    def __init__(self, mensaje = "Calculo Incorrecto"):
+        super().__init__(mensaje, "Er-007")
+
+"""Al careser de bases de datos se hace necesario crear un sistema que permita 
+guardar los datos, el cual se opta por crear la clase "logger" el cual nos permite 
+rgistrar eventos y errores """
+
+class Logger:
+    """Ecribe los events y errores en un archivo de texto."""
+    def __init__(self, ruta = os.path.join("logs", "software_FJ.log")):
+        # guardamos la ruta del archivo
+        self._ruta = ruta
+        try:
+            # creacion de la carpeta "logs" si no existe.
+            os.makedirs(os.path.dirname(self._ruta), exist_ok = True)
+        except OSError as e:
+            print(f"[ADVERTENCIA] no se pudo crear la carpeta de logs: {e}")
+            
+    def _escribir(self, nivel, mensaje):
+        """metodo interno:escribe una linea con la fecha, el nivel
+        y el texto en el archivo"""
+        marca = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            # el modo "a" significa "agregar": asi no se borra lo anterior
+            # y el log se va acumulando entre una ejecucion y otra.
+            with open(self._ruta, "a", encoding = "utf-8") as archivo:
+                archivo.write(f"[{marca}] [{nivel:<6}] {mensaje}\n")
+        except OSError as e:
+            # si falla la escritura, solo se da un mensaje de advertencia, pero el programa sigue funcionando.
+            print(f"[ADVERTENCIA] no se pudo escribir en el archivo de logs: {e}")
+    
+    def evento(self, mensaje):
+        """anota una operacion exitosa"""
+        self._escribir("INFO", mensaje)
+    
+    def error(self, mensaje, excepcion = None):
+        """ anota un error. si recibe una exepcion, tambien escribe
+        sus causas. esto nos sirve para el encadenamiento de exepciones:
+        siendo que un error puede ocurrir por otro error, y asi se podemos 
+        ver todo el historial de lo susedido."""
+        self._escribir("ERROR", mensaje)
+        actual = excepcion
+        nivel = 0
+        while actual is None:
+            # lo primero es el error princpal, lo sigiente son las cuasas.
+            etiqueta = "EXCEPCION" if nivel == 0 else "Causado por"
+            self._escribir("ERROR", f" -> {etiqueta}: {type(actual).__name__}: {actual}")
+            # __cause__ guarda el error original cuando usamos "raise ... from ..."
+            actual = actual.__cause__
+            nivel += 1
+            
+# creamos un logger global para que todas las partes del sistema puedan usarlo.
+log = Logger()
+
+# creamos una clase llamada validador, en vez de repetir las mismas reviciones en cliente, servicio y reserva, 
+# las escrivimos de una sola vez aqui. si una regla cambia, la cambiamos en un solo lugar, 
+# cada validacio devuelve un dato limpio si esta correcto, o lanza una excepcion si no lo esta
+
+class Validador:
+    """ Reune las validaciones que se usaran en todo el sistema"""
+    @staticmethod
+    def texto(valor, campo, minimo = 2):
+        """valida que sea un texto verdadero y que tenga un minimo de caracteres."""
+        if valor is None:
+            raise ParametroFaltanteError(f"Falta el campo'{campo}'")   
+        if not isinstance(valor, str) or len(valor.strip()) < minimo:
+            raise DatoInvalidoError(f"'{campo}' debe ser un texto de al menos {minimo} caracteres")
+        # strip() elimina los espacios sobrantes al nico y al final.
+        return valor.strip()
+    
+    @staticmethod
+    def email(valor):
+        """valida que el correo tenga el formao correcto."""
+        valor = Validador.texto(valor, "email", 5)
+        # esta expresion regular describe el formato del correo sencillo.
+        if not re.fullmatch(r"[\w.+-]+@[\w-]+\.[\w.-]+", valor):
+            raise DatoInvalidoError(f"Email con formato incorrecto: '{valor}'")
