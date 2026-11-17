@@ -137,3 +137,120 @@ class Validador:
         # esta expresion regular describe el formato del correo sencillo.
         if not re.fullmatch(r"[\w.+-]+@[\w-]+\.[\w.-]+", valor):
             raise DatoInvalidoError(f"Email con formato incorrecto: '{valor}'")
+        return valor.lower()
+
+    @staticmethod 
+    def telefono(valor):
+        """valida que el telefono solo tenga numeros y que tenga de 7 a 10 digitos"""
+        valor = Validador.texto(valor,"telefono", 7)
+        if not valor.isdigit() or not 7 <= len(valor) <= 10:
+            raise DatoInvalidoError("el telefono tiene que tener entre 7 y 10 digitos")
+        return valor
+
+    @staticmethod
+    def numero_positivo(valor, campo):
+        """valida que el numero sea positivo"""   
+        if valor is None:
+            raise ParametroFaltanteError(F"falta el campo '{campo}'")
+        # en python true t false cuentan como numeros(1 y 0) los excluimos
+        # para que alguien no pase por true como si fuera un precio.
+        if isinstance(valor, bool) or not isinstance(valor, (int,float)) or valor <= 0:
+            raise DatoInvalidoError(f"'{campo}' debe ser un numero positivo")
+        return valor
+    
+    # creamos una clase abstracta llamada "Entidad" 
+    # ya que un cliente, un servicio y una reserva son cosas diferentes, pero
+    # todas cuentan con un identificador y un nombre.
+class Entidad(ABC):
+    """base comun para todo lo que se genera en el sistema."""
+    # se agrega un contador que pertenece a la clase, compartiendose entre todos y sirve para 
+    # dar ids que no se repitan.
+    _contador = 0
+    
+    def __init__(self, nombre):
+        # antes de guardar el nombre se valida
+        self._nombre = Validador.texto(nombre, "nombre")
+        Entidad._contador += 1
+        self._id = Entidad._contador
+        
+    @property
+    def id(self):
+        """el id solo se puede leer; nadie puede cambiarlo desde afuera."""
+        return self._id
+    
+    @property
+    def nombre(self):
+        """el nombre tambien se consulta por una propiedad (encapsulacion)."""
+        return self._nombre
+    
+    @abstractmethod
+    def describir(self):
+        """obliga a que cada clase hija explique como se describe a si misma, siendo
+        el polimorfismo: un mismo metodo, comportamientos distintos."""
+        
+    def __str__(self):
+        # cuando hagamos print(objeto), se mostrara su decripcion.
+        return self.describir()
+    
+    # creamos la clase "sistema", ya que no se puede usar bases de datos los clientes,
+    # las reservas y lo servicios se guardaran en listas dentro de esta clase.
+    class Sistema:
+        """Guarda las listas internas y ejecuta operaciones de forma protegida."""
+ 
+    def __init__(self):
+        self._clientes = []
+        self._servicios = []
+        self._reservas = []
+        self._ok = 0        # cuantas operaciones salieron bien
+        self._fallos = 0    # cuantas operaciones fallaron
+ 
+    def ejecutar_seguro(self, descripcion, funcion, *args, **kwargs):
+        """
+        Ejecuta una operacion cuidando que nada tumbe el programa.
+ 
+        Usa las tres partes del manejo de excepciones:
+          - try/except : intenta la operacion y atrapa los errores.
+          - else       : si NO hubo errores, anota el exito.
+          - finally    : pase lo que pase, deja constancia de que se intento.
+ 
+        Devuelve el resultado de la operacion, o None si fallo.
+        """
+        try:
+            resultado = funcion(*args, **kwargs)
+        except SoftwareFJError as e:
+            # Es un error que nosotros previmos: lo anotamos y seguimos.
+            self._fallos += 1
+            log.error(f"FALLO: {descripcion}", e)
+            print(f"  [X] {descripcion} -> {e}")
+            return None
+        except Exception as e:
+            # Es un error que NO habiamos previsto. Lo envolvemos en uno de
+            # los nuestros, guardando el original como causa (encadenamiento).
+            self._fallos += 1
+            try:
+                raise SoftwareFJError("Error inesperado", "FJ-999") from e
+            except SoftwareFJError as envuelto:
+                log.error(f"FALLO INESPERADO: {descripcion}", envuelto)
+            print(f"  [X] {descripcion} -> error inesperado: {e}")
+            return None
+        else:
+            # Solo llegamos aqui si el try termino sin ningun error.
+            self._ok += 1
+            log.evento(f"OK: {descripcion}")
+            print(f"  [OK] {descripcion}")
+            return resultado
+        finally:
+            # El finally se ejecuta siempre, haya salido bien o mal.
+            log.evento(f"Intento finalizado: {descripcion}")
+ 
+    def _agregar(self, coleccion, objeto):
+        """Guarda un objeto en la lista que se le indique y lo devuelve."""
+        coleccion.append(objeto)
+        return objeto
+ 
+    def _buscar(self, coleccion, id_buscado, error=DatoInvalidoError):
+        """Busca un elemento por su id; si no lo encuentra, lanza el error indicado."""
+        for item in coleccion:
+            if item.id == id_buscado:
+                return item
+        raise error(f"No existe un elemento con id {id_buscado}")
