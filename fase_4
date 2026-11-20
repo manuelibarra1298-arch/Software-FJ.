@@ -254,3 +254,431 @@ class Entidad(ABC):
             if item.id == id_buscado:
                 return item
         raise error(f"No existe un elemento con id {id_buscado}")
+
+# Creacion de la clase Cliente.
+# Un cliente es la persona que va a reservar los servicios de Software FJ
+# como maneja datos personales (correo, telefono, documento), se requiere ser
+# muy estricto con el tema de datos personales:
+
+# Nada entra al objeto sin pasar por el Validador.
+
+# Los datos se guardan "privados" (con guion bajo) y solo se consultan o
+# modifican a traves de propiedades, que vuelven a validar cada cambio.
+
+# El documento nunca se muestra completo: solo los ultimos 4 digitos.
+
+# La clase Cliente HEREDA de Entidad, asi que recibe su id y su
+# nombre, y solo tiene que agregar lo propio de una persona.
+# ============================================================================
+ 
+ 
+class Cliente(Entidad):
+    """Persona que contrata servicios, con sus datos personales protegidos."""
+ 
+    def __init__(self, nombre=None, email=None, telefono=None, documento=None):
+        # Los parametros valen None por comodidad: si alguien olvida
+        # anotar uno, el Validador lo detecta y lanza ParametroFaltanteError
+        # (un error nuestro) en vez de un TypeError de Python.
+        try:
+            # Validamos todo antes de crear el objeto. Asi si algo esta mal
+            # no se genera un id de la clase Entidad.
+            nombre = Validador.nombre_persona(nombre)
+            email = Validador.email(email)
+            telefono = Validador.telefono(telefono)
+            documento = Validador.documento(documento)
+        except (DatoInvalidoError, ParametroFaltanteError) as e:
+            # Encadenamiento de excepciones: avisamos con un error
+            # para el negocio (ClienteInvalidoError) pero conservamos el
+            # original como causa.
+            raise ClienteInvalidoError(f"No se pudo registrar al cliente: {e.mensaje}") from e
+ 
+        # Ya con todo validado, la clase padre (Entidad) asigna el id y guarda el nombre.
+        super().__init__(nombre)
+        # Datos personales encapsulados: nadie debe tocarlos directamente.
+        self._email = email
+        self._telefono = telefono
+        self._documento = documento
+ 
+    # Propiedades: la forma de controlar la consulta y la modificacion de datos.
+ 
+    @property
+    def email(self):
+        """Devuelve el correo del cliente."""
+        return self._email
+ 
+    @email.setter
+    def email(self, nuevo_email):
+        # Cada vez que alguien cambie el correo, se vuelve a validar.
+        self._email = Validador.email(nuevo_email)
+ 
+    @property
+    def telefono(self):
+        """Devuelve el telefono del cliente."""
+        return self._telefono
+ 
+    @telefono.setter
+    def telefono(self, nuevo_telefono):
+        self._telefono = Validador.telefono(nuevo_telefono)
+ 
+    @property
+    def documento_oculto(self):
+        """Devuelve el documento oculto (ej: ******5678) para no exponerlo."""
+        return "*" * (len(self._documento) - 4) + self._documento[-4:]
+ 
+    # Operaciones del cliente.
+ 
+    def actualizar_contacto(self, email=None, telefono=None):
+        """
+        Cambia el correo, el telefono o ambos en una sola operacion.
+        validando los datos nuevos y si todos son correctos se guardaran.
+        asi nunca queda un cliente sin datos."""
+        if email is None and telefono is None:
+            raise ParametroFaltanteError("Debe indicar al menos un dato de contacto a actualizar")
+        # Si no se ingresa un dato se conserva el que ya se tenia del cliente.
+        nuevo_email = Validador.email(email) if email is not None else self._email
+        nuevo_telefono = Validador.telefono(telefono) if telefono is not None else self._telefono
+        # luego de validar todo y que sea corecto ahora si se guardan los datos.
+        self._email = nuevo_email
+        self._telefono = nuevo_telefono
+ 
+    def describir(self):
+        """Implementa el metodo abstracto de Entidad: como se presenta un Cliente."""
+        return (f"Cliente #{self.id}: {self.nombre} | {self._email} | "
+                f"Tel: {self._telefono} | Doc: {self.documento_oculto}")
+
+# Creacion de la clase Servicio y sus tipos.
+"""Software FJ ofrece tres servicios distintos: reserva de salas, alquiler de
+equipos y asesorias especializadas. Los tres se parecen (tienen una tarifa
+por hora, pueden estar disponibles o no, se les calcula un costo...) pero
+cada uno calcula su costo y valida sus parametros a su manera.
+
+Por eso creamos Servicio como clase abstracta que define lo que todos los
+servicios deben saber hacer, y deja a cada hijo la parte que cambia.
+aplicando el polimorfismo, despues podremos recorrer una lista con servicios de
+distinto tipo y llamar a calcular_costo() sin importar cual sea cada uno."""
+ 
+ 
+class Servicio(Entidad):
+    """La base abstracta de todos los servicios."""
+ 
+    # El impuesto por defecto esd de (19%). Es un dato de la clase que lo comparten todos los servicios.
+    IVA = 0.19
+ 
+    def __init__(self, nombre=None, tarifa_hora=None):
+        # Se validamos la tarifa antes de crear el objeto (al igual que se hizo con Cliente).
+        tarifa = Validador.numero_positivo(tarifa_hora, "tarifa_hora")
+        super().__init__(nombre)          
+        self._tarifa_hora = tarifa        
+        self._disponible = True           
+ 
+    # Propiedades
+ 
+    @property
+    def tarifa_hora(self):
+        """Entrega cuanto cuesta una hora del servicio."""
+        return self._tarifa_hora
+ 
+    @property
+    def disponible(self):
+        """Indica si el servicio se puede reservar en el momento."""
+        return self._disponible
+ 
+    # Metodos abstractos que cada tipo de servicio esta obligado a escribirlos.
+ 
+    @abstractmethod
+    def calcular_costo_base(self, horas):
+        """Calcula el costo al usar el servicio sin descuentos ni impuestos."""
+ 
+    @abstractmethod
+    def validar_parametros(self, horas, **extra):
+        """Revisa que los datos de la reserva sean validos para el servicio.
+        **extra permite que cada tipo reciba datos propios (ej: cantidad de personas)."""
+ 
+ 
+    def deshabilitar(self):
+        """Marca el servicio como no disponible (por mantenimiento, por ejemplo)."""
+        if not self._disponible:
+            raise OperacionNoPermitidaError(f"El servicio '{self.nombre}' no esta disponible")
+        self._disponible = False
+ 
+    def habilitar(self):
+        """Vuelve a dejar el servicio disponible."""
+        if self._disponible:
+            raise OperacionNoPermitidaError(f"El servicio '{self.nombre}' esta disponible")
+        self._disponible = True
+ 
+    def calcular_costo(self, horas, descuento = 0.0, impuesto = None, **extra):
+        """
+        Calcula el costo final del servicio, con el metodo "sobrecargado"
+        calcular_costo(3)-> costo con el IVA por defecto
+        calcular_costo(3, descuento = 0.10)-> con 10% de descuento
+        calcular_costo(3, impuesto = 0.05)-> con 5% de impuesto
+        calcular_costo(3, impuesto = 0)-> sin impuesto
+        el descuento e impuesto se escriben como fraccion (0.10 = 10%).
+        """
+        # Si el servicio esta fuera de servicio, no se puede calcular ni reservar.
+        if not self._disponible:
+            raise ServicioNoDisponibleError(f"El servicio '{self.nombre}' no esta disponible")
+ 
+        # Cada tipo de servicio revisa sus propios parametros.
+        self.validar_parametros(horas, **extra)
+ 
+        # Revisamos que el descuento y el impuesto tengan sentido.
+        if isinstance(descuento, bool) or not isinstance(descuento, (int, float)) or not 0 <= descuento < 1:
+            raise DatoInvalidoError("El descuento debe ser un numero entre 0 y 0.99")
+        tasa = self.IVA if impuesto is None else impuesto
+        if isinstance(tasa, bool) or not isinstance(tasa, (int, float)) or not 0 <= tasa <= 1:
+            raise DatoInvalidoError("El impuesto debe ser un numero entre 0 y 1")
+ 
+        # Al calcular si algo raro pasa, se convierte en
+        # un CalculoIncorrectoError conservando el error original.
+        try:
+            base = self.calcular_costo_base(horas)
+            total = base * (1 - descuento) * (1 + tasa)
+        except (TypeError, ArithmeticError) as e:
+            raise CalculoIncorrectoError("No fue posible calcular el costo del servicio") from e
+ 
+        # Un costo cero o negativo no tiene sentido y se indica como un error.
+        if total <= 0:
+            raise CalculoIncorrectoError(f"El costo calculado no es valido: {total}")
+        return round(total, 2)
+ 
+ 
+class ReservaSala(Servicio):
+    """El servicio de reserva de salas se cobra por hora y tiene una 
+    capacidad maxima."""
+ 
+    MAX_HORAS = 12   
+    # una sala no se reserva por mas de 12 horas seguidas
+ 
+    def __init__(self, nombre = None, tarifa_hora = None, capacidad = None):
+        capacidad = Validador.entero_positivo(capacidad, "capacidad")
+        super().__init__(nombre, tarifa_hora)
+        self._capacidad = capacidad
+ 
+    @property
+    def capacidad(self):
+        """Cantidad maxima de personas que caben en la sala."""
+        return self._capacidad
+ 
+    def validar_parametros(self, horas, personas=None, **extra):
+        """Las horas deben estar entre 0 y 12 y, si se indica, las personas deben caber en la sala."""
+        Validador.numero_positivo(horas, "horas")
+        if horas > self.MAX_HORAS:
+            raise ReservaInvalidaError(f"Una sala se reserva por maximo {self.MAX_HORAS} horas")
+        if personas is not None:
+            Validador.entero_positivo(personas, "personas")
+            if personas > self._capacidad:
+                raise ReservaInvalidaError(
+                    f"La sala '{self.nombre}' tiene una capacidad para {self._capacidad} personas.") #no {personas}
+ 
+    def calcular_costo_base(self, horas):
+        """Costo de la sala, la tarifa por hora se multiplica por las horas de uso."""
+        return self._tarifa_hora * horas
+ 
+    def describir(self):
+        estado = "disponible" if self._disponible else "No disponible"
+        return (f"Sala #{self.id}: {self.nombre} | Capacidad: {self._capacidad} personas | "
+                f"${self._tarifa_hora:,.2f}/hora | {estado}")
+ 
+ 
+class AlquilerEquipo(Servicio):
+    """El servicio de alquiler de equipos se cobra por hora mas un deposito fijo."""
+ 
+    MAX_HORAS = 72   
+    # un equipo se puede alquila por un maximo de 3 dias
+ 
+    def __init__(self, nombre = None, tarifa_hora = None, deposito = None):
+        deposito = Validador.numero_positivo(deposito, "deposito")
+        super().__init__(nombre, tarifa_hora)
+        self._deposito = deposito
+ 
+    @property
+    def deposito(self):
+        """El cargo fijo que se suma una vez por cada alquiler."""
+        return self._deposito
+ 
+    def validar_parametros(self, horas, **extra):
+        """La cantidad de horas deben de estar entre 0 y 72."""
+        Validador.numero_positivo(horas, "horas")
+        if horas > self.MAX_HORAS:
+            raise ReservaInvalidaError(f"Un equipo se alquila por maximo {self.MAX_HORAS} horas")
+ 
+    def calcular_costo_base(self, horas):
+        """El costo del equipo se calcula asi: (tarifa por hora x horas) + el deposito fijo."""
+        return self._tarifa_hora * horas + self._deposito
+ 
+    def describir(self):
+        estado = "disponible" if self._disponible else "No disponible"
+        return (f"Equipo #{self.id}: {self.nombre} | ${self._tarifa_hora:,.2f}/hora + "
+                f"deposito ${self._deposito:,.2f} | {estado}")
+ 
+ 
+class Asesoria(Servicio):
+    """El servicio de asesoria especializada varia el precio dependiendo del nivel del asesor."""
+ 
+    MAX_HORAS = 8
+    # Variacion de la tarifa segun el nivel del asesor.
+    RECARGO_NIVEL = {"junior": 1.0, "senior": 1.5}
+ 
+    def __init__(self, nombre = None, tarifa_hora = None, especialidad = None, nivel = "junior"):
+        especialidad = Validador.texto(especialidad, "especialidad", 3)
+        nivel = Validador.opcion(nivel, "nivel", tuple(self.RECARGO_NIVEL))
+        super().__init__(nombre, tarifa_hora)
+        self._especialidad = especialidad
+        self._nivel = nivel
+ 
+    @property
+    def especialidad(self):
+        return self._especialidad
+ 
+    @property
+    def nivel(self):
+        return self._nivel
+ 
+    def validar_parametros(self, horas, **extra):
+        """La cantidad de horas deben de estar entre 0 y 8, en bloques de media hora (0.5, 1, 1.5...)."""
+        Validador.numero_positivo(horas, "horas")
+        if horas > self.MAX_HORAS:
+            raise ReservaInvalidaError(f"Una asesoria dura maximo {self.MAX_HORAS} horas")
+        if (horas * 2) != int(horas * 2):
+            raise DatoInvalidoError("Las asesorias se reservan en bloques de media hora")
+ 
+    def calcular_costo_base(self, horas):
+        """El costo de la asesoria se calcula asi: tarifa x horas x recargo segun el nivel (junior o senior)."""
+        return self._tarifa_hora * horas * self.RECARGO_NIVEL[self._nivel]
+ 
+    def describir(self):
+        estado = "disponible" if self._disponible else "No disponible"
+        return (f"Asesoria #{self.id}: {self.nombre} | {self._especialidad} ({self._nivel}) | "
+                f"${self._tarifa_hora:,.2f}/hora | {estado}")
+
+# Creacionde la clase Reserva.
+
+# Una reserva es el punto donde todo se junta, une a un cliente 
+# con un servicio.
+
+# Cada cambio de estado tiene sus reglas, Por ejemplo, no se puede procesar
+# una reserva que nadie ha confirmado, ni cancelar una que ya esta procesada cuando
+# alguien intenta algo fuera de estos parametros, se lanza un OperacionNoPermitidaError. 
+ 
+class Reserva(Entidad):
+    """La reserva es de un servicio por parte de un cliente, con estado y costo."""
+ 
+    # Los posibles estados se guardan como constantes para no escribir
+    # textos sueltos por todo el codigo y evitar errores de tipeo.
+    PENDIENTE = "Pendiente"
+    CONFIRMADA = "Confirmada"
+    CANCELADA = "Cancelada"
+    PROCESADA = "Procesada"
+ 
+    def __init__(self, cliente = None, servicio = None, duracion = None, **extra):
+        """Al crea una reserva la 'duracion' son las horas y **extra permite enviar
+        datos propios de cada servicio por ejemplo; personas = 8 para una sala.
+        """
+        try:
+            # Primero se revisa que existan las piezas y que sean correctas.
+            if cliente is None or servicio is None:
+                raise ParametroFaltanteError("Para la reserva se necesita un cliente y un servicio")
+            if not isinstance(cliente, Cliente):
+                raise ClienteInvalidoError("El cliente de la reserva no es valido")
+            if not isinstance(servicio, Servicio):
+                raise ServicioNoDisponibleError("El servicio de la reserva no es valido")
+            if not servicio.disponible:
+                raise ServicioNoDisponibleError(f"El servicio '{servicio.nombre}' no esta disponible")
+            # Cada servicio revisa la duracion a su manera.
+            servicio.validar_parametros(duracion, **extra)
+        except SoftwareFJError as e:
+            # sin importar cual sea el resultado, para el negocio es lo mismo,
+            # si la reserva es invalida se conserva el error original como causa.
+            raise ReservaInvalidaError(f"No se pudo crear la reserva: {e.mensaje}") from e
+ 
+        # Ya todo validado se crea la entidad (el nombre une a cliente y servicio).
+        super().__init__(f"{cliente.nombre} - {servicio.nombre}")
+        self._cliente = cliente
+        self._servicio = servicio
+        self._duracion = duracion
+        self._extra = extra                 
+        self._estado = self.PENDIENTE       
+        self._costo_final = None           
+        
+# Pripiedades.
+    @property
+    def cliente(self):
+        return self._cliente
+ 
+    @property
+    def servicio(self):
+        return self._servicio
+ 
+    @property
+    def duracion(self):
+        """La cantidad de horas reservadas."""
+        return self._duracion
+ 
+    @property
+    def estado(self):
+        """El estado actual, Pendiente, Confirmada, Cancelada o Procesada."""
+        return self._estado
+ 
+    @property
+    def costo_final(self):
+        """El costo cobrado es None mientras la reserva no haya sido procesada."""
+        return self._costo_final
+ 
+    #Operaciones sobre la reserva.
+ 
+    def costo_estimado(self, descuento = 0.0, impuesto = None):
+        """Se retorna cuanto costaria la reserva, sin cambiar su estado acepta las
+        mismas variantes que calcular_costo (descuento e impuesto opcionales).
+        """
+        return self._servicio.calcular_costo(self._duracion, descuento, impuesto, **self._extra)
+ 
+    def confirmar(self):
+        """Pasa la reserva de Pendiente a Confirmada."""
+        if self._estado != self.PENDIENTE:
+            raise OperacionNoPermitidaError(
+                f"Solo se puede confirmar una reserva pendiente (estado actual: {self._estado})")
+        # Entre crear y confirmar, el servicio pudo quedar fuera de servicio.
+        if not self._servicio.disponible:
+            raise ServicioNoDisponibleError(f"El servicio '{self._servicio.nombre}' no esta disponible")
+        self._estado = self.CONFIRMADA
+        log.evento(f"Reserva #{self.id} confirmada")
+ 
+    def cancelar(self, motivo = "Sin motivo indicado"):
+        """Cancela la reserva. No se puede cancelar una ya cancelada o ya procesada."""
+        if self._estado in (self.CANCELADA, self.PROCESADA):
+            raise OperacionNoPermitidaError(
+                f"No se puede cancelar una reserva en estado {self._estado}")
+        self._estado = self.CANCELADA
+        log.evento(f"Reserva #{self.id} cancelada. Motivo: {motivo}")
+ 
+    def procesar(self, descuento = 0.0, impuesto = None):
+        """Al procesa una reserva confirmada se calcula su costo final y la marca como
+        Procesada retornando el costo cobrado y si algo falla la reserva queda
+        como estaba para poder reintentarlo."""
+        if self._estado != self.CONFIRMADA:
+            raise OperacionNoPermitidaError(
+                f"Solo se puede procesar una reserva confirmada (estado actual: {self._estado})")
+        try:
+            costo = self._servicio.calcular_costo(self._duracion, descuento, impuesto, **self._extra)
+        except SoftwareFJError as e:
+            # El encadenamiento se usa en el error de bajo nivel (ej: servicio deshabilitado) y
+            # queda como causa de un error claro para el negocio.
+            raise ReservaInvalidaError(f"No se pudo procesar la reserva #{self.id}") from e
+        else:
+            # Teniendo todo validado y que sea correcto ahora si cambiamos el estado.
+            self._costo_final = costo
+            self._estado = self.PROCESADA
+            log.evento(f"Reserva #{self.id} procesada. Costo final: {costo}")
+            return costo
+        finally:
+            log.evento(f"Procesamiento intentado para la reserva #{self.id}")
+ 
+    def describir(self):
+        """Se implementa el metodo abstracto de Entidad en como se presenta una Reserva."""
+        texto = (f"Reserva #{self.id}: {self._cliente.nombre} -> {self._servicio.nombre} | "
+                 f"{self._duracion} h | Estado: {self._estado}")
+        if self._costo_final is not None:
+            texto += f" | Total: ${self._costo_final:,.2f}"
+        return texto
